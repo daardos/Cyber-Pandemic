@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Cyber Pandemic: Final Judgement EX</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #010103; font-family: 'Consolas', monospace; }
+        #ui {
+            position: absolute; top: 20px; left: 20px; color: #00f2ff;
+            background: rgba(0, 0, 0, 0.9); padding: 15px; border-left: 4px solid #ff3131;
+            z-index: 10; text-transform: uppercase;
+        }
+        .warning { color: #ff3131; font-weight: bold; animation: blink 0.5s infinite; }
+        @keyframes blink { 50% { opacity: 0; } }
+        .time-panel {
+            position: absolute; bottom: 20px; right: 20px; z-index: 10;
+            background: rgba(0,0,0,0.8); padding: 10px; border: 1px solid #00f2ff;
+        }
+        .t-btn { background: #001a1a; color: #00f2ff; border: 1px solid #00f2ff; cursor: pointer; padding: 5px 15px; margin-left: 5px; }
+        .t-btn:hover, .active-t { background: #00f2ff; color: #000; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+
+    <div id="ui">
+        <div style="font-size: 1.1rem; margin-bottom: 5px;">GLOBAL DEFCON MONITOR</div>
+        <div>Здоровые: <span id="h-count">0</span></div>
+        <div>Зараженные: <span id="i-count" style="color:#ff3131">0</span></div>
+        <div id="alert-box"></div>
+    </div>
+
+    <div class="time-panel">
+        <button class="t-btn" onclick="timeScale = 0.5">x0.5</button>
+        <button class="t-btn active-t" onclick="timeScale = 1">x1</button>
+        <button class="t-btn" onclick="timeScale = 2">x2</button>
+    </div>
+
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        let particles = [], islands = [], ships = [], missiles = [];
+        let timeScale = 1, pirate = null;
+
+        function init() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            while (islands.length < 8) {
+                let r = Math.random() * 30 + 130;
+                let island = {
+                    x: Math.random() * (canvas.width - 400) + 200,
+                    y: Math.random() * (canvas.height - 400) + 200,
+                    r: r, destroyed: false, hospital: { patients: [], max: 3 }
+                };
+                if (!islands.some(is => Math.hypot(is.x - island.x, is.y - island.y) < 280)) {
+                    islands.push(island);
+                    for(let i=0; i<15; i++) particles.push(new Particle(island));
+                }
+            }
+            for(let i=0; i<5; i++) ships.push(new Ship(false));
+            pirate = new Ship(true);
+        }
+
+        class Particle {
+            constructor(island) {
+                this.island = island; this.status = 'healthy'; this.hits = 0; 
+                this.lastContact = 0; this.onBoard = false; this.dead = false;
+                this.x = island.x + (Math.random()-0.5)*island.r;
+                this.y = island.y + (Math.random()-0.5)*island.r;
+                this.vx = (Math.random()-0.5)*0.8; this.vy = (Math.random()-0.5)*0.8;
+            }
+            receiveContact() {
+                if (this.status === 'healthy' && (Date.now() - this.lastContact) > 3000/timeScale) {
+                    this.hits++; this.lastContact = Date.now();
+                    if (this.hits >= 3) { this.status = 'infected'; this.hits = 0; }
+                }
+            }
+            update() {
+                if (this.onBoard || this.status === 'healing' || this.dead) return;
+                this.x += this.vx * timeScale; this.y += this.vy * timeScale;
+                let dx = this.x - this.island.x, dy = this.y - this.island.y;
+                if (Math.hypot(dx, dy) > this.island.r) { this.vx -= dx*0.001; this.vy -= dy*0.001; }
+                if (this.status === 'infected' && !this.island.destroyed) {
+                    let h = this.island.hospital;
+                    if (Math.hypot(this.x - this.island.x, this.y - this.island.y) < 35 && h.patients.length < h.max) {
+                        this.status = 'healing'; this.timer = Date.now(); h.patients.push(this);
+                    }
+                }
+            }
+            draw() {
+                if (this.onBoard || this.status === 'healing' || this.dead) return;
+                if (this.status === 'healthy' && (Date.now() - this.lastContact) < 3000/timeScale) {
+                    ctx.strokeStyle = "white"; ctx.strokeRect(this.x-5, this.y-5, 10, 10);
+                }
+                ctx.fillStyle = this.status === 'infected' ? '#ff3131' : '#00f2ff';
+                ctx.beginPath(); ctx.arc(this.x, this.y, 4, 0, Math.PI * 2); ctx.fill();
+                if (this.hits > 0 && this.status === 'healthy') {
+                    ctx.fillStyle = "#ff9900";
+                    for(let i=0; i<this.hits; i++) ctx.fillRect(this.x - 4 + (i*4), this.y - 12, 3, 3);
+                }
+            }
+        }
+
+        class Ship {
+            constructor(isPirate) {
+                this.isPirate = isPirate; this.status = isPirate ? 'infected' : 'healthy';
+                this.route = islands.map((_, i) => i).sort(() => Math.random()-0.5);
+                this.targetIdx = 0; this.x = Math.random()*canvas.width; this.y = Math.random()*canvas.height;
+                this.speed = isPirate ? 0.3 : 0.7; this.passenger = null;
+                this.hits = 0; this.lastContact = 0; this.boost = 0;
+            }
+            receiveContact() {
+                if (this.status === 'healthy' && !this.isPirate && (Date.now() - this.lastContact) > 3000/timeScale) {
+                    this.hits++; this.lastContact = Date.now();
+                    if (this.hits >= 3) { this.status = 'infected'; this.hits = 0; }
+                }
+            }
+            update() {
+                let target = islands[this.route[this.targetIdx]];
+                if (target.destroyed) { this.targetIdx = (this.targetIdx + 1) % islands.length; return; }
+                let curSpeed = (Date.now() - this.boost < 3000) ? this.speed * 4 : this.speed;
+                let dx = target.x - this.x, dy = target.y - this.y;
+                let dist = Math.hypot(dx, dy);
+                if (dist < 15) {
+                    if (!this.isPirate && !this.passenger) {
+                        let p = particles.find(p => p.island === target && !p.onBoard && !p.dead);
+                        if (p) { this.passenger = p; p.onBoard = true; }
+                    } else if (this.passenger) {
+                        this.passenger.onBoard = false; this.passenger.island = target;
+                        this.passenger.x = this.x; this.passenger.y = this.y; this.passenger = null;
+                    }
+                    this.targetIdx = (this.targetIdx + 1) % islands.length;
+                } else {
+                    this.x += (dx/dist) * curSpeed * timeScale;
+                    this.y += (dy/dist) * curSpeed * timeScale;
+                }
+                if (this.passenger) { this.passenger.x = this.x; this.passenger.y = this.y; }
+            }
+            draw() {
+                if (this.status === 'healthy' && (Date.now() - this.lastContact) < 3000/timeScale) {
+                    ctx.strokeStyle = "white"; ctx.strokeRect(this.x-10, this.y-10, 20, 20);
+                }
+                ctx.fillStyle = this.status === 'infected' ? '#ff3131' : '#fff';
+                ctx.fillRect(this.x-9, this.y-9, 18, 18);
+                if (this.isPirate) { ctx.strokeStyle="white"; ctx.strokeRect(this.x-6, this.y-6, 12, 12); }
+                if (this.passenger) { ctx.fillStyle = "#00f2ff"; ctx.fillRect(this.x-3, this.y-3, 6, 6); }
+            }
+        }
+
+        class Missile {
+            constructor(tx, ty, island) {
+                this.x = tx; this.y = -100; this.tx = tx; this.ty = ty; this.island = island;
+                this.speed = 4 * timeScale; this.exploded = false; this.timer = 0;
+            }
+            update() {
+                if (this.y < this.ty) this.y += this.speed;
+                else if (!this.exploded) {
+                    this.exploded = true; this.island.destroyed = true; this.timer = Date.now();
+                    particles.filter(p => p.island === this.island).forEach(p => p.dead = true);
+                }
+            }
+            draw() {
+                if (this.exploded) {
+                    let s = (Date.now() - this.timer) / 500;
+                    if (s < 1) { ctx.fillStyle = "rgba(255,165,0,"+(1-s)+")"; ctx.beginPath(); ctx.arc(this.x, this.y, s*300, 0, Math.PI*2); ctx.fill(); }
+                } else {
+                    ctx.fillStyle = "#fff"; ctx.fillRect(this.x-2, this.y, 4, 30);
+                }
+            }
+        }
+
+        function drawIslands() {
+            islands.forEach(is => {
+                if (is.destroyed) {
+                    ctx.fillStyle = "#050505"; ctx.beginPath(); ctx.arc(is.x, is.y, is.r, 0, Math.PI*2); ctx.fill();
+                    return;
+                }
+                let infected = particles.filter(p => p.island === is && p.status === 'infected').length;
+                let alive = particles.filter(p => p.island === is && !p.dead).length;
+                
+                if (infected === alive && alive > 0 && !missiles.some(m => m.island === is)) {
+                    document.getElementById('alert-box').innerHTML = "<div class='warning'>LAUNCHING STRIKE...</div>";
+                    missiles.push(new Missile(is.x, is.y, is));
+                }
+
+                let g = ctx.createRadialGradient(is.x, is.y, is.r*0.2, is.x, is.y, is.r);
+                g.addColorStop(0, 'rgba(0,50,60,0.4)'); g.addColorStop(1, 'transparent');
+                ctx.fillStyle = g; ctx.beginPath(); ctx.arc(is.x, is.y, is.r, 0, Math.PI*2); ctx.fill();
+                ctx.strokeStyle = "rgba(0, 242, 255, 0.1)"; ctx.stroke();
+                
+                ctx.fillStyle = "#39ff14"; ctx.fillRect(is.x-15, is.y-15, 30, 30);
+                is.hospital.patients.forEach((p, i) => {
+                    if (Date.now() - p.timer > 5000/timeScale) { p.status = 'healthy'; p.hits = 0; is.hospital.patients.splice(i, 1); }
+                });
+            });
+        }
+
+        function animate() {
+            ctx.fillStyle = 'rgba(1, 1, 3, 0.4)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            drawIslands();
+            missiles.forEach(m => m.update() || m.draw());
+
+            particles.forEach(p1 => {
+                if (p1.dead) return; p1.update(); p1.draw();
+                if (p1.status === 'infected') {
+                    particles.forEach(p2 => {
+                        if (p2.status === 'healthy' && !p2.onBoard && Math.hypot(p1.x-p2.x, p1.y-p2.y) < 20) {
+                            if (Math.random() < 0.05 * timeScale) p2.receiveContact();
+                        }
+                    });
+                }
+            });
+
+            [...ships, pirate].forEach(s => {
+                s.update(); s.draw();
+                particles.forEach(p => {
+                    if (!p.dead && !p.onBoard && Math.hypot(s.x-p.x, s.y-p.y) < 40) {
+                        if (s.status === 'infected' && Math.random() < 0.1 * timeScale) p.receiveContact();
+                        if (p.status === 'infected' && Math.random() < 0.1 * timeScale) s.receiveContact();
+                    }
+                });
+                if (!s.isPirate && Math.hypot(s.x-pirate.x, s.y-pirate.y) < 40) s.receiveContact();
+            });
+
+            document.getElementById('h-count').innerText = particles.filter(p=>p.status==='healthy'&&!p.dead).length + ships.filter(s=>s.status==='healthy').length;
+            document.getElementById('i-count').innerText = particles.filter(p=>p.status==='infected'&&!p.dead).length + ships.filter(s=>s.status==='infected').length + 1;
+            requestAnimationFrame(animate);
+        }
+
+        window.onclick = (e) => {
+            if (Math.hypot(pirate.x-e.clientX, pirate.y-e.clientY) < 50) pirate.boost = Date.now();
+            particles.concat(ships).forEach(p => { if (Math.hypot(p.x-e.clientX, p.y-e.clientY) < 60) p.status = 'infected'; });
+        };
+        init(); animate();
+    </script>
+</body>
+</html>
